@@ -1,5 +1,5 @@
 AWSTemplateFormatVersion: '2010-09-09'
-Description: Wild Rydes Highly Available ECS Fargate CI/CD Stack (Fixed)
+Description: Wild Rydes Highly Available ECS Fargate CI/CD Stack
 
 Resources:
 
@@ -287,7 +287,7 @@ Resources:
                 Owner: "JialeDu"
                 Repo: "cosc1209-test2"
                 Branch: "main"
-                OAuthToken: "GITHUB_TOKEN"
+                OAuthToken: ""
 
         - Name: Build
           Actions:
@@ -329,6 +329,8 @@ Resources:
       ComparisonOperator: GreaterThanThreshold
       EvaluationPeriods: 1
       Statistic: Sum
+      Period: 60
+      Unit: Seconds
       Dimensions:
         - Name: ProjectName
           Value: !Ref CodeBuildProject
