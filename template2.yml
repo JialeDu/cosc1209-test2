@@ -1,11 +1,7 @@
 AWSTemplateFormatVersion: '2010-09-09'
-Description: Wild Rydes Highly Available ECS Fargate CI/CD Stack
+Description: Wild Rydes Highly Available ECS Fargate CI/CD Stack (Fixed)
 
 Resources:
-
-  # -----------------------
-  # Networking
-  # -----------------------
 
   VPC:
     Type: AWS::EC2::VPC
@@ -115,15 +111,11 @@ Resources:
       SubnetId: !Ref PrivateSubnet2
       RouteTableId: !Ref PrivateRouteTable
 
-  # -----------------------
-  # Load Balancer
-  # -----------------------
-
   ALBSecurityGroup:
     Type: AWS::EC2::SecurityGroup
     Properties:
       VpcId: !Ref VPC
-      GroupDescription: "Allow HTTP inbound"
+      GroupDescription: Allow HTTP access
       SecurityGroupIngress:
         - IpProtocol: tcp
           FromPort: 80
@@ -146,8 +138,6 @@ Resources:
       Protocol: HTTP
       Port: 80
       TargetType: ip
-      HealthCheckPath: /
-      HealthCheckProtocol: HTTP
 
   HTTPListener:
     Type: AWS::ElasticLoadBalancingV2::Listener
@@ -158,10 +148,6 @@ Resources:
       DefaultActions:
         - Type: forward
           TargetGroupArn: !Ref TargetGroup
-
-  # -----------------------
-  # ECS + ECR
-  # -----------------------
 
   ECSCluster:
     Type: AWS::ECS::Cluster
@@ -188,17 +174,12 @@ Resources:
     Type: AWS::EC2::SecurityGroup
     Properties:
       VpcId: !Ref VPC
-      GroupDescription: "Allow ALB to ECS"
+      GroupDescription: Allow inbound from ALB only
       SecurityGroupIngress:
         - IpProtocol: tcp
           FromPort: 80
           ToPort: 80
-          SourceSecurityGroupId: !Ref ALBSecurityGroup
-
-  LogGroup:
-    Type: AWS::Logs::LogGroup
-    Properties:
-      LogGroupName: /ecs/WildRydes
+          SourceSecurityGroupId: !GetAtt ALBSecurityGroup.GroupId
 
   TaskDefinition:
     Type: AWS::ECS::TaskDefinition
@@ -215,12 +196,6 @@ Resources:
           Image: !Sub "${AWS::AccountId}.dkr.ecr.${AWS::Region}.amazonaws.com/wildrydes:latest"
           PortMappings:
             - ContainerPort: 80
-          LogConfiguration:
-            LogDriver: awslogs
-            Options:
-              awslogs-group: !Ref LogGroup
-              awslogs-region: !Ref AWS::Region
-              awslogs-stream-prefix: ecs
 
   ECSService:
     Type: AWS::ECS::Service
@@ -237,15 +212,11 @@ Resources:
       NetworkConfiguration:
         AwsvpcConfiguration:
           AssignPublicIp: DISABLED
-          SubnetIds:
+          Subnets:
             - !Ref PrivateSubnet1
             - !Ref PrivateSubnet2
           SecurityGroups:
             - !Ref ECSSecurityGroup
-
-  # -----------------------
-  # CI/CD – CodeBuild, CodePipeline
-  # -----------------------
 
   CodeBuildRole:
     Type: AWS::IAM::Role
@@ -289,32 +260,10 @@ Resources:
             Principal:
               Service: codepipeline.amazonaws.com
             Action: sts:AssumeRole
-      Policies:
-        - PolicyName: CodePipelineBasePolicy
-          PolicyDocument:
-            Version: "2012-10-17"
-            Statement:
-              - Effect: Allow
-                Action:
-                  - s3:GetObject
-                  - s3:GetObjectVersion
-                  - s3:PutObject
-                Resource: "*"
-              - Effect: Allow
-                Action:
-                  - codebuild:StartBuild
-                  - codebuild:BatchGetBuilds
-                Resource: "*"
-              - Effect: Allow
-                Action:
-                  - iam:PassRole
-                Resource: "*"
-              - Effect: Allow
-                Action:
-                  - ecs:DescribeServices
-                  - ecs:DescribeTaskDefinition
-                  - ecs:UpdateService
-                Resource: "*"
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/AWSCodePipeline_ReadOnlyAccess
+        - arn:aws:iam::aws:policy/AWSCodeBuildDeveloperAccess
+        - arn:aws:iam::aws:policy/AmazonS3FullAccess
 
   Pipeline:
     Type: AWS::CodePipeline::Pipeline
@@ -338,12 +287,11 @@ Resources:
                 Owner: "JialeDu"
                 Repo: "cosc1209-test2"
                 Branch: "main"
-                OAuthToken: ""
-                PollForSourceChanges: "false"
+                OAuthToken: "GITHUB_TOKEN"
 
         - Name: Build
           Actions:
-            - Name: BuildApp
+            - Name: CodeBuild
               ActionTypeId:
                 Category: Build
                 Owner: AWS
@@ -358,7 +306,7 @@ Resources:
 
         - Name: Deploy
           Actions:
-            - Name: DeployECS
+            - Name: DeployToECS
               ActionTypeId:
                 Category: Deploy
                 Owner: AWS
@@ -369,28 +317,23 @@ Resources:
               Configuration:
                 ClusterName: !Ref ECSCluster
                 ServiceName: !Ref ECSService
-                FileName: "imagedefinitions.json"
-
-  # -----------------------
-  # CloudWatch Alarm
-  # -----------------------
+                FileName: imagedefinitions.json
 
   BuildFailAlarm:
     Type: AWS::CloudWatch::Alarm
     Properties:
-      AlarmDescription: CodeBuild failed
+      AlarmDescription: Build failed
       Namespace: AWS/CodeBuild
       MetricName: BuildFailures
+      Threshold: 1
+      ComparisonOperator: GreaterThanThreshold
+      EvaluationPeriods: 1
+      Statistic: Sum
       Dimensions:
         - Name: ProjectName
           Value: !Ref CodeBuildProject
-      Statistic: Sum
-      Period: 300
-      EvaluationPeriods: 1
-      Threshold: 1
-      ComparisonOperator: GreaterThanOrEqualToThreshold
 
 Outputs:
   WebsiteURL:
-    Description: "Application Load Balancer URL"
+    Description: Application Load Balancer URL
     Value: !GetAtt ApplicationLoadBalancer.DNSName
